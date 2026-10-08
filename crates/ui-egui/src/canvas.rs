@@ -2320,14 +2320,23 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
                         }
                     }
                 }
+                // The Eyedropper: the comparison ring follows the pointer while it samples (#213);
+                // otherwise its pipette, or the crosshair for Precise Other Cursors.
+                Tool::Eyedropper => {
+                    if let Some(icon) = eyedropper_ring(app, &painter, &xf, p, response.is_pointer_button_down_on()) {
+                        icon
+                    } else if app.session.prefs().cursors.other == photocraft_engine::prefs::OtherCursor::Precise {
+                        egui::CursorIcon::Crosshair
+                    } else {
+                        pipette_cursor(ui.ctx(), p)
+                    }
+                }
                 // Preferences › Cursors › Other Cursors: Precise shows a crosshair for every tool.
-                Tool::Move | Tool::Type | Tool::VerticalType | Tool::Eyedropper
+                Tool::Move | Tool::Type | Tool::VerticalType
                     if app.session.prefs().cursors.other == photocraft_engine::prefs::OtherCursor::Precise =>
                 {
                     egui::CursorIcon::Crosshair
                 }
-                // The Eyedropper: the comparison ring follows the pointer while it samples (#213).
-                Tool::Eyedropper => eyedropper_ring(app, &painter, &xf, p, response.is_pointer_button_down_on()).unwrap_or(egui::CursorIcon::Crosshair),
                 Tool::Move => egui::CursorIcon::Move,
                 Tool::Hand => {
                     if response.dragged() {
@@ -2344,7 +2353,6 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
                     }
                 }
                 Tool::Type | Tool::VerticalType => egui::CursorIcon::Text,
-                Tool::Eyedropper => pipette_cursor(ui.ctx(), p),
                 Tool::MagneticLasso => crate::magnetic_lasso_ui::cursor(app, &painter, p, view.zoom),
                 _ => egui::CursorIcon::Crosshair,
             };
