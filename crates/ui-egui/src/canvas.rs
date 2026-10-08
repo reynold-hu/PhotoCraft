@@ -345,10 +345,12 @@ pub(crate) fn eyedropper_ring_colors(app: &mut PhotocraftApp, x: f64, y: f64) ->
 }
 
 /// Draw the Eyedropper's comparison ring at `p`: the sampled colour on the upper arc, the
-/// current one below, both over a thin dark outline so they read on any image (#213). `None`
-/// when there is nothing to sample, or the Precise-cursor preference wants the plain crosshair.
-fn eyedropper_ring(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewXform, p: Pos2) -> Option<egui::CursorIcon> {
-    if app.session.prefs().cursors.other == photocraft_engine::prefs::OtherCursor::Precise {
+/// current one below, both over a thin dark outline so they read on any image (#213). Like
+/// Photoshop it shows only while the mouse button is held (`held`): hovering shows the plain
+/// crosshair and samples nothing. `None` when not held, there is nothing to sample, or the
+/// Precise-cursor preference wants the plain crosshair.
+fn eyedropper_ring(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewXform, p: Pos2, held: bool) -> Option<egui::CursorIcon> {
+    if !held || app.session.prefs().cursors.other == photocraft_engine::prefs::OtherCursor::Precise {
         return None;
     }
     let [x, y] = xf.to_doc(p);
@@ -365,9 +367,10 @@ fn eyedropper_ring(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewXf
             })
             .collect()
     };
+    let outline = crate::theme::Tokens::get(painter.ctx()).shadow;
     for (a0, a1, colour) in [(PI + gap, TAU - gap, new), (gap, PI - gap, current)] {
         let points = arc(a0, a1);
-        painter.add(egui::Shape::line(points.clone(), Stroke::new(w + 1.5, Color32::from_black_alpha(150))));
+        painter.add(egui::Shape::line(points.clone(), Stroke::new(w + 1.5, outline)));
         painter.add(egui::Shape::line(points, Stroke::new(w, colour)));
     }
     Some(egui::CursorIcon::None)
@@ -2260,8 +2263,8 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
                 // ⌥ turns a painting tool into the Eyedropper (`alt_eyedropper`): its cursor too,
                 // unless Preferences › Cursors › Other Cursors asks for the precise crosshair.
                 t if app.alt_sampling || (app.drag.is_none() && alt_samples(t, crate::workspace_ui::sticky_mods(app, ui.input(|i| i.modifiers)))) => {
-                    // While it samples, the comparison ring replaces the cursor (#213).
-                    if let Some(icon) = eyedropper_ring(app, &painter, &xf, p) {
+                    // While it samples (button held), the comparison ring replaces the cursor (#213).
+                    if let Some(icon) = eyedropper_ring(app, &painter, &xf, p, response.is_pointer_button_down_on()) {
                         icon
                     } else if app.session.prefs().cursors.other == photocraft_engine::prefs::OtherCursor::Precise {
                         egui::CursorIcon::Crosshair
@@ -2323,8 +2326,8 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
                 {
                     egui::CursorIcon::Crosshair
                 }
-                // The Eyedropper: the comparison ring follows the pointer (#213).
-                Tool::Eyedropper => eyedropper_ring(app, &painter, &xf, p).unwrap_or(egui::CursorIcon::Crosshair),
+                // The Eyedropper: the comparison ring follows the pointer while it samples (#213).
+                Tool::Eyedropper => eyedropper_ring(app, &painter, &xf, p, response.is_pointer_button_down_on()).unwrap_or(egui::CursorIcon::Crosshair),
                 Tool::Move => egui::CursorIcon::Move,
                 Tool::Hand => {
                     if response.dragged() {
