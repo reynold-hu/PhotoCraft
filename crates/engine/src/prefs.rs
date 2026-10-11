@@ -1124,7 +1124,6 @@ pub const HIDDEN_UNTIL_IMPLEMENTED: &[&str] = &[
     "performance.legacyCompositing",
     "scratchDisks.disks",
     "unitsAndRulers.columnWidth",
-    "unitsAndRulers.gutter",
     "plugIns.showExtensionPanels",
     "plugIns.allowScriptsToConnect",
     "type.textEngine",
