@@ -2263,7 +2263,8 @@ fn dock_strip_id() -> egui::Id {
 /// Auto-Show Hidden Panels (Preferences ▸ Workspace ▸ Auto-show hidden panels): with the
 /// panels hidden (Window ▸ Show/Hide Panels, Tab), the pointer at the window's outer edge — or
 /// over what that hover already revealed — brings the toolbar and the panel dock back for as
-/// long as the pointer stays, as in Photoshop. The canvas moves aside for the frame.
+/// long as the pointer stays, as in Photoshop. The peeked panels draw over the canvas (see
+/// the overlay in `PhotocraftApp::logic`), so the image never moves under the pointer.
 fn auto_show_peek(app: &PhotocraftApp, ctx: &egui::Context) -> Peek {
     let mut peek = Peek::default();
     if !app.session.prefs().workspace.auto_show_hidden_panels {
@@ -2280,19 +2281,35 @@ fn auto_show_peek(app: &PhotocraftApp, ctx: &egui::Context) -> Peek {
     let win = ctx.content_rect();
     let rtl = crate::direction::is_rtl();
     let over = |id: egui::Id| ctx.data(|d| d.get_temp::<Option<egui::Rect>>(id)).flatten().is_some_and(|r| r.expand(2.0).contains(p));
+    // A drag never starts a peek: the pointer crossing an edge mid-stroke must not move the
+    // image under it. A peek the pointer is already inside (its strip) stays alive, so a
+    // click on a peeked panel does not dismiss it mid-click.
+    let button_down = ctx.input(|i| i.pointer.any_down());
+    // The edge strips the pointer must still reach: the vertical scrollbar at the window's
+    // right edge, and the vertical ruler at the left edge while rulers are shown. A peek
+    // triggered from over either would cover the very control the pointer is using.
+    let over_vbar = crate::scrollbars::bar_rects(win, true, true).1.is_some_and(|r| r.contains(p));
+    let over_vruler = app.ui.extras.rulers && p.x < win.left() + crate::rulers::RULER;
+    // Only panels Tab hid come back on hover: a panel closed from the Window menu stays
+    // closed, as in Photoshop.
+    let tab_hidden = app.ui.panels.hidden_by_tab;
+    let toolbar_tab_hidden = tab_hidden.is_some_and(|[toolbar, _, _]| toolbar);
+    let dock_tab_hidden = tab_hidden.is_some_and(|[_, _, dock]| dock);
     // A strip only keeps an *active* peek alive: while the panel is visible again, or once the
     // pointer has left the edge and the strip, it is dropped, so a stale strip cannot reveal the
     // panel from anywhere over its former area later.
-    if !app.ui.panels.toolbar {
+    if !app.ui.panels.toolbar && toolbar_tab_hidden {
         let edge = if rtl { win.right() } else { win.left() };
-        peek.toolbar = (p.x - edge).abs() <= ZONE || over(toolbar_strip_id());
+        let blocked = if rtl { over_vbar } else { over_vruler };
+        peek.toolbar = (!button_down && (p.x - edge).abs() <= ZONE && !blocked) || over(toolbar_strip_id());
     }
     if !peek.toolbar {
         clear_panel_strip(ctx, toolbar_strip_id());
     }
-    if !app.ui.panels.dock {
+    if !app.ui.panels.dock && dock_tab_hidden {
         let edge = if rtl { win.left() } else { win.right() };
-        peek.dock = (p.x - edge).abs() <= ZONE || over(dock_strip_id());
+        let blocked = if rtl { over_vruler } else { over_vbar };
+        peek.dock = (!button_down && (p.x - edge).abs() <= ZONE && !blocked) || over(dock_strip_id());
     }
     if !peek.dock {
         clear_panel_strip(ctx, dock_strip_id());
@@ -2306,12 +2323,9 @@ fn clear_panel_strip(ctx: &egui::Context, id: egui::Id) {
     });
 }
 
-/// Records the strip a start (`toolbar`) or end (`dock`) panel occupied, so the next frame's
-/// edge hover can keep it revealed while the pointer is over the panel it just brought back.
-fn record_panel_strip(ctx: &egui::Context, id: egui::Id, before: egui::Rect, after: egui::Rect, start: bool) {
-    let w = (before.width() - after.width()).clamp(0.0, before.width());
-    let x = if start != crate::direction::is_rtl() { before.left() } else { before.right() - w };
-    let rect = egui::Rect::from_min_size(egui::pos2(x, before.top()), egui::vec2(w, before.height()));
+/// Records the rect a peeked panel's overlay occupied, so the next frame's edge hover can
+/// keep it revealed while the pointer is over the panel it just brought back.
+fn record_panel_strip(ctx: &egui::Context, id: egui::Id, rect: egui::Rect) {
     ctx.data_mut(|d| {
         d.insert_temp(id, Some(rect));
     });
@@ -2329,6 +2343,7 @@ impl PhotocraftApp {
         }
         self.last_frame_start_ms = gpu_canvas::now_ms();
     }
+}
 
 impl eframe::App for PhotocraftApp {
     fn on_exit(&mut self) {
@@ -2532,33 +2547,54 @@ impl eframe::App for PhotocraftApp {
             panels::status_bar(self, ui);
         }
         // Auto-Show Hidden Panels: the pointer at the window edge brings the hidden toolbar and
-        // dock back for a frame (see `auto_show_peek`).
+        // dock back for a frame (see `auto_show_peek`); the peek itself draws as an overlay
+        // below, over the canvas.
         let peek = auto_show_peek(self, &ctx);
-        if (chrome && (self.ui.panels.toolbar || peek.toolbar)) || tabbed_in {
-            let before = ui.available_rect_before_wrap();
+        if (chrome && self.ui.panels.toolbar) || tabbed_in {
             panels::toolbar(self, ui);
-            // Only a peek leaves a strip behind: a normally visible panel must not turn its old
-            // area into a hover target once it is hidden again.
-            if peek.toolbar {
-                record_panel_strip(&ctx, toolbar_strip_id(), before, ui.available_rect_before_wrap(), true);
-            } else {
-                clear_panel_strip(&ctx, toolbar_strip_id());
-            }
         }
-        if (chrome && (self.ui.panels.dock || peek.dock)) || tabbed_in {
-            let before = ui.available_rect_before_wrap();
+        if (chrome && self.ui.panels.dock) || tabbed_in {
             panels::right_dock(self, ui);
-            if peek.dock {
-                record_panel_strip(&ctx, dock_strip_id(), before, ui.available_rect_before_wrap(), false);
-            } else {
-                clear_panel_strip(&ctx, dock_strip_id());
-            }
         }
         let t = theme::Tokens::get(&ctx);
         let backdrop = if chrome { prefs_ui::pasteboard_color(self).unwrap_or(t.canvas) } else { egui::Color32::BLACK };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(backdrop)).show(ui, |ui| {
             canvas::document_area(self, ui);
         });
+        // A peeked panel draws over the canvas, never in the layout: in the layout the canvas
+        // would shrink for the frame and the image would jump under the pointer, mid-stroke
+        // included. The strip the overlay occupied keeps the peek alive while the pointer is
+        // over the panel it brought back.
+        if chrome && (peek.toolbar || peek.dock) {
+            let win = ctx.content_rect();
+            let rtl = crate::direction::is_rtl();
+            if peek.toolbar {
+                let (pos, pivot) = if rtl {
+                    (egui::pos2(win.right(), win.top()), egui::Align2::RIGHT_TOP)
+                } else {
+                    (egui::pos2(win.left(), win.top()), egui::Align2::LEFT_TOP)
+                };
+                let resp = egui::Area::new(egui::Id::new("toolbar-peek"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(pos)
+                    .pivot(pivot)
+                    .show(&ctx, |ui| panels::toolbar(self, ui));
+                record_panel_strip(&ctx, toolbar_strip_id(), resp.response.rect);
+            }
+            if peek.dock {
+                let (pos, pivot) = if rtl {
+                    (egui::pos2(win.left(), win.top()), egui::Align2::LEFT_TOP)
+                } else {
+                    (egui::pos2(win.right(), win.top()), egui::Align2::RIGHT_TOP)
+                };
+                let resp = egui::Area::new(egui::Id::new("dock-peek"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(pos)
+                    .pivot(pivot)
+                    .show(&ctx, |ui| panels::right_dock(self, ui));
+                record_panel_strip(&ctx, dock_strip_id(), resp.response.rect);
+            }
+        }
         panels::properties_window(self, &ctx);
         brush_panel::window(self, &ctx);
         preset_panels::windows(self, &ctx);
