@@ -334,7 +334,46 @@ fn the_first_layout_starts_from_the_units_and_rulers_gutter() {
     assert_eq!(app.ui.dialog_mut(id).unwrap().fields["gutter"].as_f64(), Some(12.0), "the preference's default");
     app.session.prefs.edit(|p| p.units_and_rulers.gutter = 8.0);
     // The dialog has been used: its remembered values win, not the new preference.
+    // Directly priming the remembered layout stands in for a confirmed dialog, so the
+    // saved flag goes with it.
     app.ui.view.guide_layout = json!({"columns": 4, "gutter": 4, "rows": 0, "rowGutter": 0, "margin": 0, "centerColumns": false, "clearExisting": false});
+    app.ui.view.guide_layout_saved = true;
     let id = open(&mut app);
     assert_eq!(app.ui.dialog_mut(id).unwrap().fields["gutter"].as_f64(), Some(4.0), "remembered values stay");
+}
+
+/// A layout saved with exactly the factory defaults still counts as remembered: a
+/// later Units & Rulers gutter change must not reseed its gutter (#3549 review).
+#[test]
+fn a_saved_default_layout_is_not_reseeded_from_the_gutter_preference() {
+    let mut app = app();
+    app.ui.view.guide_layout = crate::view_cmds::default_guide_layout();
+    app.ui.view.guide_layout_saved = true;
+    app.session.prefs.edit(|p| p.units_and_rulers.gutter = 8.0);
+    let id = open(&mut app);
+    assert_eq!(app.ui.dialog_mut(id).unwrap().fields["gutter"].as_f64(), Some(20.0), "the remembered default gutter wins over the changed preference");
+}
+
+/// First use still seeds from the preference when the stored layout is the factory
+/// default: only a confirmed layout counts as remembered.
+#[test]
+fn an_unsaved_default_layout_still_starts_from_the_gutter_preference() {
+    let mut app = app();
+    app.session.prefs.edit(|p| p.units_and_rulers.gutter = 8.0);
+    let id = open(&mut app);
+    assert_eq!(app.ui.dialog_mut(id).unwrap().fields["gutter"].as_f64(), Some(8.0), "first use seeds from the preference");
+}
+
+/// Confirming marks the layout saved, so the values confirmed on first open win over
+/// a later gutter preference change.
+#[test]
+fn confirming_marks_the_layout_saved() {
+    let mut app = app();
+    let id = open(&mut app);
+    assert_eq!(app.ui.dialog_mut(id).unwrap().fields["gutter"].as_f64(), Some(12.0), "first open seeds from the preference default");
+    crate::dialogs::confirm(&mut app, id).unwrap();
+    assert!(app.ui.view.guide_layout_saved, "confirming marks the layout saved");
+    app.session.prefs.edit(|p| p.units_and_rulers.gutter = 8.0);
+    let id = open(&mut app);
+    assert_eq!(app.ui.dialog_mut(id).unwrap().fields["gutter"].as_f64(), Some(12.0), "the confirmed gutter wins over the changed preference");
 }

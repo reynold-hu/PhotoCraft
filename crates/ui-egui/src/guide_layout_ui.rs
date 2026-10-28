@@ -78,9 +78,11 @@ pub fn open(app: &mut PhotocraftApp) -> u64 {
         f.insert("target".into(), json!("document"));
     }
     f.entry("__preset").or_insert_with(|| json!("custom"));
-    // Preferences ▸ Units & Rulers ▸ Gutter: the first layout (before the dialog has been used
-    // and its values remembered) starts from the preferred gutter, as in Photoshop.
-    if app.ui.view.guide_layout == crate::view_cmds::default_guide_layout() {
+    // Preferences ▸ Units & Rulers ▸ Gutter: the first layout (before the dialog has been
+    // confirmed and its values remembered) starts from the preferred gutter, as in
+    // Photoshop. A confirmed layout wins even when it equals the factory defaults, so
+    // the saved flag — not equality with the defaults — marks first use.
+    if !app.ui.view.guide_layout_saved {
         f.insert("gutter".into(), json!(app.session.prefs().units_and_rulers.gutter));
     }
     f.entry("width").or_insert(Value::Null);
@@ -172,6 +174,7 @@ pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
         remembered.remove(key);
     }
     app.ui.view.guide_layout = Value::Object(remembered);
+    app.ui.view.guide_layout_saved = true;
     Ok(result)
 }
 

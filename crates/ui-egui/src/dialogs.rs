@@ -900,6 +900,7 @@ pub fn confirm(app: &mut PhotocraftApp, id: u64) -> Result<Value, String> {
             }
             if result.is_ok() && cmd == "view.newGuideLayout" {
                 app.ui.view.guide_layout = params;
+                app.ui.view.guide_layout_saved = true;
             }
             if result.is_ok() {
                 if crate::adjust_dialog::owns(&d.fields) {
